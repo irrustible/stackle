@@ -28,9 +28,6 @@ Licensed under either of
 
 at your option.
 
-Includes code from switcheroo (c) Bernard Kolobara, Kai Mast licensed
-under the same terms. [switcheroo](https://github.com/lunatic-solutions/async-wormhole/)
-
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally
