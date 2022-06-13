@@ -1,12 +1,8 @@
-// #![cfg_attr(feature="nightly", feature(naked_fns))]
+#![cfg_attr(not(feature="std"), no_std)]
+#![cfg_attr(feature="nightly", feature(naked_functions))]
 
-#[cfg(unix)]
-mod os_unix;
-#[cfg(unix)]
-pub use os_unix::*;
+#[cfg(all(feature="alloc", not(feature="std")))]
+extern crate alloc;
 
-// #[cfg(windows)]
-// mod os_windows;
-// #[cfg(windows)]
-// pub use os_windows::*;
-
+pub mod stack;
+pub mod switch;
