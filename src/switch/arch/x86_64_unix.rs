@@ -15,15 +15,15 @@ pub unsafe fn link(
   let paused_stack: *mut usize;
   asm!(
     // step 1: state preservation. we must spill our state to the stack so we may be resumed.
-    "lea rax, [rip + 1f]", // calculate address of end of this function with forward ref
+    "lea rax, [rip + 2f]", // calculate address of end of this function with forward ref
     "mov [rsp - 8],  rax", // save end of function as the return address
     "mov [rsp - 16], rbp", // save the frame pointer
     "mov [rsp - 24], rbx", // save llvm's nefarious porpoises register.
 
     // step 2: setting up the first frame in the new stack
-    "mov [rdx - 8],  rsi",  // entry function address
-    "mov [rdx - 16], rsp",  // caller frame address (our stack pointer)
-
+    "mov [rdx - 8],  rsi", // entry function address
+    "xor rax, rax",
+    "mov [rdx - 16], rax",
     // the stack should now look like this:
     // | end rel | data                |
     // |---------|---------------------|
@@ -41,16 +41,16 @@ pub unsafe fn link(
     // | rsi      | rsp (our stack pointer) |
     
     // step 4: calling trampoline on the new stack.
-    "mov rbx, rbx",        // zero out rbx
+    "xor rbx, rbx",        // zero out rbx
     "lea rbp, [rdx - 16]", // set the correct frame pointer
-    "mov rsp, rbp", // set the correct stack pointer
+    "mov rsp, rbp",        // set the correct stack pointer
     "jmp rcx",             // switch to trampoline
     
     // End of function, as taken in first instruction. register layout should now be:
     // | register | value                |
     // |----------|----------------------|
     // | rdx      | paused stack pointer |
-    "1:",
+    "2:",
     inout("rdi") fun => _,
     inout("rsi") entry => _,
     inout("rdx") stack => paused_stack,
@@ -77,47 +77,45 @@ pub unsafe fn link(
 /// Behaviour is undefined if:
 /// * The stack was not paused correctly
 #[inline(always)]
-pub unsafe fn suspend(resume_stack: *mut usize, output: *const u8) -> (*mut usize, *mut u8, *const u8) {
+pub unsafe fn suspend(resume_stack: *mut usize, arg: usize) -> (*mut usize, usize) {
   let paused_stack: *mut usize;
-  let done: *mut u8;
-  let input: *const u8;
+  let input: usize;
   asm!(
     // spill to stack
-    "lea rax, [rip + 1f]", // calculate address of end of this function with forward ref
+    "lea rax, [rip + 2f]", // calculate address of end of this function with forward ref
     "mov [rsp - 8],  rax", // save end of function as the return address
     "mov [rsp - 16], rbp", // save the frame pointer
     "mov [rsp - 24], rbx", // save llvm's nefarious porpoises register.
+
+    // switch stacks
+    "mov rdx, rsp",        // save current stack pointer into rdx
+    "mov rsp, rdi",        // load new stack pointer from resume_stack
+
+    // step 2: state restoration (inverse of preservation) and returning
     // resume from stack
     "mov rbx, [rdi - 24]",
     "mov rbp, [rdi - 16]",
     "mov rax, [rdi - 8]",
-
-    "mov rdx, rsp",        // save current stack pointer into rdx
-
-    // step 2: state restoration (inverse of preservation) and returning
-    "mov rsp, rdi",
-
 
     "jmp rax",             // go there
 
     // | register | value                   |
     // |----------|-------------------------|
     // | rdi      |                         |
-    // | rsi      | output pointer          |
+    // | rsi      | arg                     |
     // | rdx      | paused stack pointer    |
 
     // the end of the function, always called into by resume()
-    "1:", 
+    "2:", 
     // | register | value                  |
     // |----------|------------------------|
     // | rdi      |                        |
-    // | rsi      | done pointer           |
-    // | rdx      | input pointer          |
-    // | rcx      | paused stack pointer   |
+    // | rsi      | arg                    |
+    // | rdx      | paused stack pointer   |
     inout("rdi") resume_stack => _,
-    inout("rsi") output => done,
-    out("rdx") input,
-    out("rcx") paused_stack,
+    inout("rsi") arg => input,
+    out("rdx") paused_stack,
+    out("rcx") _,
     out("rax") _,
     // clobber_abi("C")
     out("r8") _,    out("r9") _,    out("r10") _,   out("r11") _,
@@ -127,7 +125,7 @@ pub unsafe fn suspend(resume_stack: *mut usize, output: *const u8) -> (*mut usiz
     out("xmm8") _,  out("xmm9") _,  out("xmm10") _, out("xmm11") _,
     out("xmm12") _, out("xmm13") _, out("xmm14") _, out("xmm15") _,
   );
-  (paused_stack, done, input)
+  (paused_stack, input)
 }
 
 /// Pauses the current stack context and resumes another.
@@ -140,16 +138,16 @@ pub unsafe fn suspend(resume_stack: *mut usize, output: *const u8) -> (*mut usiz
 /// Behaviour is undefined if:
 /// * The stack was not paused correctly
 #[inline(always)]
-pub unsafe fn resume(resume_stack: *mut usize, done: *mut u8, input: *const u8) -> (*mut usize, *const u8) {
+pub unsafe fn resume(resume_stack: *mut usize, arg: usize) -> (*mut usize, usize) {
+  let mut arg = arg;
   let paused_stack: *mut usize;
-  let output: *const u8;
   asm!(
     // step 1: state preservation. we must spill our state to the stack so we may be resumed.
-    "lea rax, [rip + 1f]", // calculate address of end of this function with forward ref
+    "lea rax, [rip + 2f]", // calculate address of end of this function with forward ref
     "mov [rsp - 8],  rax", // save end of function as the return address
     "mov [rsp - 16], rbp", // save the frame pointer
     "mov [rsp - 24], rbx", // save llvm's nefarious porpoises register.
-    "mov rcx, rsp", // save current stack pointer to rcx
+    "mov rdx, rsp",        // save current stack pointer to rdx
 
     // step 2: state restoration (inverse of preservation) and returning
     "mov rsp, rdi",        // load the stack pointer to return to
@@ -161,21 +159,19 @@ pub unsafe fn resume(resume_stack: *mut usize, done: *mut u8, input: *const u8) 
     // | register | value                  |
     // |----------|------------------------|
     // | rdi      |                        |
-    // | rsi      | done pointer           |
-    // | rdx      | input pointer          |
-    // | rcx      | paused stack pointer   |
-
-    "1:", // the end of the function, always called into by suspend()
+    // | rsi      | arg                    |
+    // | rdx      | paused stack pointer   |
+    "2:", // the end of the function, always called into by suspend()
     // | register | value                  |
     // |----------|------------------------|
     // | rdi      |                        |
-    // | rsi      | output pointer         |
+    // | rsi      | arg                    |
     // | rdx      | paused stack pointer   |
     inout("rdi") resume_stack => _,
-    inout("rsi") done => output,
-    inout("rdx") input => paused_stack,
-    out("rcx") _,
+    inout("rsi") arg => arg,
+    out("rdx") paused_stack,
     out("rax") _,
+    out("rcx") _,
     // clobber_abi("C")
     out("r8") _,    out("r9") _,    out("r10") _,   out("r11") _,
     out("r12") _,   out("r13") _,   out("r14") _,   out("r15") _,
@@ -184,7 +180,7 @@ pub unsafe fn resume(resume_stack: *mut usize, done: *mut u8, input: *const u8) 
     out("xmm8") _,  out("xmm9") _,  out("xmm10") _, out("xmm11") _,
     out("xmm12") _, out("xmm13") _, out("xmm14") _, out("xmm15") _,
   );
-  (paused_stack, output)
+  (paused_stack, arg)
 }
 
 /* Trampoline function
@@ -199,10 +195,10 @@ pub unsafe fn resume(resume_stack: *mut usize, done: *mut u8, input: *const u8) 
 #[naked]
 unsafe extern "C" fn trampoline() {
   asm!(
-    // Stop unwinding at this frame. This directive tells the assembler that the old value of rip
-    // (the instruction pointer) can no longer be restored.
+    // Mark rip as unrestorable, i.e. stop unwinding at this frame
     ".cfi_undefined rip",
-    "jmp [rsp + 8]", // Call the return address
+    // 
+    "call [rsp + 8]", // call the function
     options(noreturn)
   )
 }

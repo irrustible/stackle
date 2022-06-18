@@ -1,9 +1,9 @@
-
 /// # Safety
 ///
-/// * end() must return an appropriately aligned pointer.
+/// * `end()` must return an appropriately aligned pointer.
+/// * The stack is expected to be flanked by a guard page or never to overflow.
 pub unsafe trait Stack {
-  /// Returns a pointer past the end of the stack.
+  /// Returns a pointer to the end of the stack's memory, i.e. the first byte after the stack.
   fn end(&self) -> *mut usize;
 }
 
