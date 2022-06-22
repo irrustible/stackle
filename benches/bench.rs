@@ -1,9 +1,9 @@
 use criterion::*;
 use stackle::{*, stack::*, switch::*};
 
-fn closure(mut paused: *mut usize, _value: usize) {
+fn closure(mut stack: *mut usize, _value: usize) {
   loop {
-    paused = unsafe { suspend(paused, 0) }.0;
+    stack = unsafe { switch(stack, 0) }.stack
   }
 }
 
@@ -16,7 +16,7 @@ fn linking_closure(c: &mut Criterion) {
       unsafe {
         let s = AllocatorStack::new(8192);
         b.iter(|| {
-          black_box(link_closure(closure, s.end()));
+          black_box(link_closure_detached(s.end(), closure));
         });
       }
     }
@@ -31,10 +31,10 @@ fn ping_pong(c: &mut Criterion) {
     |b| {
       unsafe {
         let s = AllocatorStack::new(8192);
-        let c = link_closure(closure, s.end());
-        let mut ret = (c, 0usize);
+        let c = link_closure_detached(s.end(), closure);
+        let mut ret = Switch { stack: c, arg: 0 };
         b.iter(|| {
-          ret = resume(ret.0, ret.1);
+          ret = switch(ret.stack, ret.arg);
         })
       }
     }
