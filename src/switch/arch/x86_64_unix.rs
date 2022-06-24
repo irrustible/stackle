@@ -61,14 +61,17 @@ pub unsafe extern "C" fn link_detached(
     
     // step 4: calling trampoline on the new stack.
     "xor rbx, rbx",        // zero out rbx
-    "xor rbp, rbp",        // set the correct frame pointer
+    "xor rbp, rbp",        // zero out rbp (meaning "top of call chain")
     "lea rsp, [rdx - 16]", // set the correct stack pointer
     "jmp rcx",             // switch to trampoline
     
     // End of function, as taken in first instruction. register layout should now be:
-    // | register | value                |
-    // |----------|----------------------|
-    // | rdx      | paused stack pointer |
+    // | register | value                   |
+    // |----------|-------------------------|
+    // | rdi      | our sp (ignored)        |
+    // | rsi      | arg                     |
+    // | rdx      | paused stack pointer    |
+
     "2:",
     inout("rdi") fun => _,
     inout("rsi") arg => _,
@@ -114,6 +117,7 @@ pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch
     "mov rax, [rdi - 8]",
     "jmp rax",
 
+    // our internal calling convention is this:
     // | register | value                   |
     // |----------|-------------------------|
     // | rdi      |                         |
@@ -122,11 +126,6 @@ pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch
 
     // the end of the function, always called into by resume()
     "2:", 
-    // | register | value                  |
-    // |----------|------------------------|
-    // | rdi      |                        |
-    // | rsi      | arg                    |
-    // | rdx      | paused stack pointer   |
     inout("rdi") stack => _,
     inout("rsi") arg,
     out("rdx") stack,
