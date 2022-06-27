@@ -19,7 +19,6 @@ pub unsafe extern "C" fn link_detached(
   arg: usize,            // probably a pointer to a closure
   mut stack: *mut usize, // the end of a stack region.
 ) -> *mut usize {
-
   asm!(
     // step 1: state preservation. we must spill our state to the stack so we may be resumed.
     "lea rax, [rip + 2f]", // calculate address of end of this function with forward ref
@@ -173,7 +172,7 @@ core::arch::global_asm!(
   ".global trampoline",
   ".align 16",
   "trampoline:",
-  ".cfi_startproc simple",
+  ".cfi_startproc",
   ".cfi_undefined rip",
   ".cfi_undefined rbp",
   "call [rsp]",

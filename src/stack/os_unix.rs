@@ -1,91 +1,139 @@
-pub use std::io::Error;
+pub use std::io;
+use super::Stack;
+use std::fmt;
 use std::ptr::null_mut;
+use libc::{MAP_ANONYMOUS, MAP_FAILED, MAP_FIXED, MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, c_int, c_void};
 
-use libc::{MAP_ANONYMOUS, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE};
-const PROT: i32 = PROT_READ | PROT_WRITE;
-const FLAGS: i32 = MAP_ANONYMOUS | MAP_SHARED;
-
-const MMAP_RETURNED_NULL: &str =
-  "Mmap returned null, which violates POSIX and certainly isn't sporting.";
-
-pub struct OsStack {
-  start: *mut u8,
-  size:   u32, // If you need gigabytes of stack you are doing it wrong
+#[derive(Debug)]
+pub enum ParanoidError {
+  GuardMapFailed(io::Error),
+  StackMapFailed(*mut c_void, io::Error),
 }
 
-unsafe impl super::Stack for OsStack {
-  fn end(&self) -> *mut usize {
-    unsafe { self.start.offset(self.size as isize)}.cast()
+/// Puts a guard page before and after the stack to detect overflow and underflow.
+pub struct ParanoidStack {
+  start: *mut u8,
+  size:  u32, // If you need gigabytes of stack you are doing it wrong
+  page:  u32, // The page size. This will round us up to 2 words on 64-bit and 3 on 32-bit
+}
+
+impl fmt::Debug for ParanoidStack {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "ParanoidStack<{:x}-{:x}>", self.start as usize, self.end() as usize)
   }
 }
 
+unsafe impl Stack for ParanoidStack {
+  fn end(&self) -> *mut usize {
+    let size = self.size + self.page;
+    unsafe { self.start.add(size as usize)}.cast()
+  }
+}
 
-impl OsStack {
-  /// `mmap()`s a new `OsStack`, rounding the size to the nearest page size for the platform.
-  pub fn new(size: u32, page_size: PageSize) -> Result<OsStack, Error> {
-    let size = page_size.round(size);
-
-    // All proper operating systems have some notion of mapping a stack, so our job is easy.
-    #[cfg(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux",
-              target_os="netbsd",       target_os="openbsd"))] {
-      match unsafe { libc::mmap(null_mut(), size as usize, PROT, FLAGS | libc::MAP_STACK, -1, 0) } {
-        MAP_FAILED => Err(Error::last_os_error()),
-        not_ptr if not_ptr.is_null() => panic!("{}", MMAP_RETURNED_NULL),
-        ptr => Ok(OsStack { start: ptr as *mut _, size: size as u32}),
+impl ParanoidStack {
+  pub fn new(size: u32, page_size: PageSize) -> Result<Self, ParanoidError> {
+    // No platform supports a double-guarded stack, or at least doesn't document doing so, so we
+    // have to deal with at least one of the guard pages ourselves. Thus we start by allocating an
+    // inaccessible region that covers both guard pages in addition to the stack.
+    let size = page_size.round(size); // Rounding the page size helps with cross-platformness.
+    let guard_size = page_size.0;
+    let total_size = guard_size + guard_size + size;
+    match unsafe { libc::mmap(null_mut(), total_size as usize, PROT_NONE, GUARD_FLAGS, -1, 0) } {
+      MAP_FAILED => Err(ParanoidError::GuardMapFailed(io::Error::last_os_error())),
+      not_ptr if not_ptr.is_null() => panic!("{}", MMAP_RETURNED_NULL),
+      start => {
+        // That went well. Now we have to allocate the useful portion of it.
+        // * FreeBSD will allocate a guard page, but wants it included in the length and pointer.
+        // * Frankly, I'm not sure for most of the others, they should improve their documentation
+        //   where they add guard pages and should add guard page support otherwise. We will assume
+        //   they want the start of the actual stack space and let users file bugs if it segfaults.
+        #[cfg(target_os="freebsd")]
+        let ptr = start; // FreeBSD wants the guard page included.
+        #[cfg(not(target_os="freebsd"))]
+        let ptr = unsafe { start.cast::<u8>().add(guard_size as usize) }.cast::<c_void>(); // Skip the guard page
+        #[cfg(target_os="freebsd")]
+        let stack_size = size + guard_size; // FreeBSD wants the guard page included.
+        #[cfg(not(target_os="freebsd"))]
+        let stack_size = size;
+        // Now finally we actually do the mmap.
+        match unsafe { libc::mmap(ptr, stack_size as usize, PROT, STACK_FLAGS, -1, 0) } {
+          MAP_FAILED => Err(ParanoidError::StackMapFailed(start, io::Error::last_os_error())),
+          not_ptr if not_ptr.is_null() => panic!("{}", MMAP_RETURNED_NULL),
+          moved if moved != ptr => panic!("{}", MMAP_MOVED_FIXED),
+          _ => Ok(ParanoidStack { start: start as *mut u8, size, page: page_size.0 })
+        }
       }
     }
-    #[cfg(not(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux",
-                  target_os="netbsd",       target_os="openbsd")))] {
-      // While this platform, whatever it is (probably apple) claims to be unix, it clearly doesn't
-      // really believe in it as it does not support MAP_STACK (or we haven't been able to determine
-      // that it does). This is a massive pain because it means we need to construct the guard page
-      // ourselves and we don't even know if MAP_FIXED will be respected.
-      //
-      // We will try anyway and hope for the best.
-      const GUARD_FAIL:  &str = "Remapping the guard page failed. I can't even.";
-      const GUARD_NIL:   &str = "Remapping the guard page returned nil. What is your OS smoking? I want some.";
-      const GUARD_MOVED: &str = "Your operating system has a creative interpretation of POSIX and I'm giving up.";
-    
-      // First of all we must determine how much space to allocate. 
-      let unguarded = size;
-      let guard = page_size.size();
-      let guarded = unguarded + guard;
-      // We're going to mmap it twice. First for the full region including guard page.
-      match libc::mmap(null_mut(), guarded as usize, PROT, FLAGS, -1, 0) {
-        MAP_FAILED => Err(Error::last_os_error()),
-        not_ptr if not_ptr == null_mut() => panic!("{}", MMAP_RETURNED_NULL),
-        not_ptr => {
-          // Now we're going to turn the guard page into a guard page.
-          let ptr = not_ptr as *mut u8;
-          match libc::mmap(ptr as *mut _, page_size.size() as usize, libc::PROT_NONE, FLAGS, -1, 0) {
-            MAP_FAILED => panic!("{}", GUARD_FAIL),
-            not_ptr if not_ptr.is_null() => panic!("{}", GUARD_NIL),
-            not_ptr2 if not_ptr != not_ptr2 => panic!("{}", GUARD_MOVED),
-            _ => Ok(OsStack {
-              start: ptr.add(page_size.size()).cast(),
-              size: unguarded,
-            }),
-          }
+  }
+}
+
+impl Drop for ParanoidStack {
+  fn drop(&mut self) {
+    let size = self.size + self.page + self.page;
+    unsafe { libc::munmap(self.start as *mut _, size as usize) };
+  }
+}
+
+ #[derive(Debug)]
+pub enum SafeError {
+  GuardMapFailed(io::Error),
+  StackMapFailed(*mut c_void, io::Error),
+}
+
+/// Puts a guard page before the stack to detect overflow.
+pub struct SafeStack {
+  start: *mut u8,
+  size:  u32, // If you need gigabytes of stack you are doing it wrong
+  page:  u32, // The page size. This will round us up to 2 words on 64-bit
+}
+
+impl fmt::Debug for SafeStack {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "SafeStack<{:x}-{:x}>", self.start as usize, self.end() as usize)
+  }
+}
+
+unsafe impl Stack for SafeStack {
+  fn end(&self) -> *mut usize {
+    let size = self.size + self.page;
+    unsafe { self.start.offset(size as isize)}.cast()
+  }
+}
+
+impl SafeStack {
+  pub fn new(size: u32, page_size: PageSize) -> Result<Self, SafeError> {
+    let size = page_size.round(size); // Rounding the page size helps with cross-platformness.
+    let guard_size = page_size.0;
+    let total_size = size + guard_size;
+    #[cfg(target_os="freebsd")] // FreeBSD is quite good actually.
+    match unsafe { libc::mmap(null_mut(), total_size as usize, PROT_NONE, STACK_FLAGS, -1, 0) } {
+      MAP_FAILED => Err(StackError::StackMapFailed(null_mut(), io::Error::last_os_error())),
+      not_ptr if not_ptr.is_null() => panic!("{}", MMAP_RETURNED_NULL),
+      start => Ok(SafeStack { start: start as *mut u8, size, page: page_size.0 }),
+    }
+    #[cfg(not(target_os="freebsd"))] // Oh no.
+    match unsafe { libc::mmap(null_mut(), total_size as usize, PROT_NONE, GUARD_FLAGS, -1, 0) } {
+      MAP_FAILED => Err(SafeError::GuardMapFailed(io::Error::last_os_error())),
+      not_ptr if not_ptr.is_null() => panic!("{}", MMAP_RETURNED_NULL),
+      start => {
+        // That went well. Now we have to allocate the useful portion of it.
+        let ptr = unsafe { start.cast::<u8>().add(guard_size as usize) }.cast::<libc::c_void>(); // Skip the guard page
+        // Now finally we actually map the useful space
+        match unsafe { libc::mmap(ptr, size as usize, PROT, STACK_FLAGS, -1, 0) } {
+          MAP_FAILED => Err(SafeError::StackMapFailed(start, io::Error::last_os_error())),
+          not_ptr if not_ptr.is_null() => panic!("{}", MMAP_RETURNED_NULL),
+          moved if moved != ptr => panic!("{}: {}", MMAP_MOVED_FIXED, moved as usize),
+          _ => Ok(SafeStack { start: start as *mut u8, size, page: page_size.0 }),
         }
-      }    
+      }
     }
   }
 }
 
-impl Drop for OsStack {
+impl Drop for SafeStack {
   fn drop(&mut self) {
-    #[cfg(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux",
-              target_os="netbsd",       target_os="openbsd"))] {
-      unsafe { libc::munmap(self.start as *mut _, self.size as usize) };
-    }
-    #[cfg(not(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux",
-                  target_os="netbsd",       target_os="openbsd")))] {
-      // To be tidy, we will undo the guard page we manually set up as well, even though this complicates matters...
-      let guard_size = PageSize::get().unwrap().size(); // if it succeeded before, it will presumably succeed again...
-      let ptr = self.start.sub(guard_size);
-      let size = self.size + guard_size;
-      unsafe { libc::munmap(ptr as *mut _, size); }
-    }
+    let size = self.size + self.page;
+    unsafe { libc::munmap(self.start as *mut _, size as usize) };
   }
 }
 
@@ -95,9 +143,9 @@ impl Drop for OsStack {
 pub struct PageSize(u32);
 
 impl PageSize {
-  pub fn get() -> Result<PageSize, Error> {
+  pub fn get() -> io::Result<PageSize> {
    match unsafe { libc::sysconf(libc::_SC_PAGESIZE) }{
-      -1 => Err(Error::last_os_error()),
+      -1 => Err(io::Error::last_os_error()),
       size => Ok(PageSize(size as u32)),
     }
   }
@@ -111,30 +159,19 @@ impl PageSize {
   }
 }
 
-// Sorry, but if your alleged unix can't map a stack, you can't have nice things.
-#[cfg(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux", target_os="netbsd", target_os="openbsd"))]
-pub struct OsStackConst<const SIZE: u32>(*mut u8);
+const PROT: i32 = PROT_READ | PROT_WRITE;
+
+const MMAP_RETURNED_NULL: &str =
+  "Mmap returned null, which violates POSIX and certainly isn't sporting.";
+const MMAP_MOVED_FIXED: &str =
+  "Your OS doesn't even recognise MAP_FIXED, I can't really help you";
+
+#[cfg(not(target_os="freebsd"))]
+const GUARD_FLAGS: c_int = MAP_ANONYMOUS | MAP_PRIVATE;
+#[cfg(target_os="freebsd")] // sounds like this is faster? not entirely sure.
+const GUARD_FLAGS: c_int = MAP_ANONYMOUS | MAP_PRIVATE | libc::MAP_GUARD;
 
 #[cfg(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux", target_os="netbsd", target_os="openbsd"))]
-impl<const SIZE: u32> OsStackConst<SIZE> {
-  pub fn new() -> Result<Self, Error> {
-    match unsafe { libc::mmap(null_mut(), SIZE as usize, PROT, FLAGS | libc::MAP_STACK, -1, 0) } {
-      MAP_FAILED => Err(Error::last_os_error()),
-      not_ptr if not_ptr.is_null() => panic!("{}", MMAP_RETURNED_NULL),
-      ptr => Ok(OsStackConst(ptr as *mut _)),
-    }
-  }
-}
-#[cfg(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux", target_os="netbsd", target_os="openbsd"))]
-unsafe impl<const SIZE: u32> super::Stack for OsStackConst<SIZE> {
-  fn end(&self) -> *mut usize {
-    unsafe { self.0.offset(SIZE as isize) }.cast()
-  }
-}
-
-#[cfg(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux", target_os="netbsd", target_os="openbsd"))]
-impl<const SIZE: u32> Drop for OsStackConst<SIZE> {
-  fn drop(&mut self) {
-    unsafe { libc::munmap(self.0 as *mut _, SIZE as usize) };
-  }
-}
+const STACK_FLAGS: c_int = MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED | libc::MAP_STACK;
+#[cfg(not(any(target_os="dragonflybsd", target_os="freebsd", target_os="linux", target_os="netbsd", target_os="openbsd")))]
+const STACK_FLAGS: c_int = MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED;
