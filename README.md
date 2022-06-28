@@ -37,16 +37,25 @@ fn adding() {
 
 ## Platform support
 
-| OS           | Compatibility | Tested on |
-|--------------|---------------|-----------|
-| DragonflyBSD | yes           | NO        |
-| FreeBSD      | 12+           | NO        |
-| Linux        | yes           | x86-64    |
-| NetBSD       | yes           | NO        |
-| OpenBSD      | yes           | NO        |
+| OS            | aarch64 | arm | riscv32 | riscv64 | x86 | x86_64 |
+|---------------|---------|-----|---------|---------|-----|--------|
+| DragonflyBSD  | U       | P   | P       | P       | U   | U      |
+| FreeBSD (12+) | U       | P   | P       | P       | U   | U      |
+| Linux         | U       | P   | P       | P       | U   | S      |
+| NetBSD        | U       | P   | P       | P       | U   | U      |
+| OpenBSD       | U       | P   | P       | P       | U   | U      |
+| Mac OS X      | U       | X   |         |         |     | U      |
+| Windows       | U       | X   |         |         | X   | P      |
 
-Note: "yes" here means that the API doesn't appear to have changed significantly for our purposes in
-many years so within reason, any version ought to work.
+Legend:
+* U: Untested, may or may not work.
+* S: Supported.
+* P: Planned.
+* X: No support planned.
+* blank = invalid combination.
+
+Note: With the exception of FreeBSD, the API doesn't appear to have changed significantly for our
+purposes in many years so within reason, any version ought to work.
 
 More to come:
 * x86-64 windows
@@ -58,7 +67,8 @@ More to come:
 ## Limitations
 
 * Detached stacks start at a trampoline function. Avoiding this would mean requiring the user to
-  write each function they wanted to spawn on the new stack in assembly.
+  write each function they wanted to spawn on the new stack in assembly. We decline to do so.
+* Miri chokes on `mmap()` and inline asm, so only `AllocatorStack` will work so far.
 
 ## Performance
 

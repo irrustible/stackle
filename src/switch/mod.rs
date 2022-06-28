@@ -5,6 +5,12 @@ use core::mem::ManuallyDrop;
 
 pub type InitFn =  unsafe extern "C" fn(*mut usize, *const u8);
 
+#[repr(C)]
+pub struct Switch {
+  pub stack: *mut usize,
+  pub arg:   usize,
+}
+
 /// Moves the closure onto the new stack and calls it.
 ///
 /// Closure receives the paused stack to return to as well as the first input (a usize).

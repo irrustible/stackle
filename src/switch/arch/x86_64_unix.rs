@@ -1,11 +1,8 @@
-use crate::switch::InitFn;
+//! The job is actually quite simple here. We have loads of registers
+//! to play with, so mostly it's just a case of pushing callee-saved
+//! registers and having lots of clobbers.
+use crate::switch::{InitFn, Switch};
 use core::arch::asm;
-
-#[repr(C)]
-pub struct Switch {
-  pub stack: *mut usize,
-  pub arg:   usize,
-}
 
 /// Links a coroutine with a new stack, starting a new call stack at a trampoline.
 ///
@@ -25,7 +22,6 @@ pub unsafe extern "C" fn link_detached(
     "mov [rsp - 8],  rax", // save end of function as the return address
     "mov [rsp - 16], rbp", // save the frame pointer in case it is used (it probably isn't)
     "mov [rsp - 24], rbx", // save llvm's nefarious porpoises register.
-
     // our stack should now look like this:
     // | rsp rel | data           |
     // |---------|----------------|
@@ -45,8 +41,8 @@ pub unsafe extern "C" fn link_detached(
     // the new stack should now look like this:
     // | end rel | data                |
     // |---------|---------------------|
-    // | -8      | entrypoint function |
-    // | -16     | caller frame addr   |
+    // | -8      | trampoline function |
+    // | -16     | entrypoint function |
 
     // step 3: setting up parameters
     // rdi = fun (we haven't touched it)
@@ -55,8 +51,8 @@ pub unsafe extern "C" fn link_detached(
     // argument layout should now be:
     // | register | value                   |
     // |----------|-------------------------|
-    // | rdi      | fun (closure parameter) |
-    // | rsi      | rsp (our stack pointer) |
+    // | rdi      | rsp (our stack pointer) |
+    // | rsi      | arg (closure parameter) |
     
     // step 4: calling trampoline on the new stack.
     "xor rbx, rbx",        // zero out rbx
@@ -76,22 +72,12 @@ pub unsafe extern "C" fn link_detached(
     inout("rsi") arg => _,
     inout("rdx") stack,
     inout("rcx") trampoline => _,
-    out("rax") _,                 // scratch
-    // clobber_abi("C")
-    out("r8") _,    out("r9") _,    out("r10") _,   out("r11") _,
-    out("r12") _,   out("r13") _,   out("r14") _,   out("r15") _,
-    out("xmm0") _,  out("xmm1") _,  out("xmm2") _,  out("xmm3") _,
-    out("xmm4") _,  out("xmm5") _,  out("xmm6") _,  out("xmm7") _,
-    out("xmm8") _,  out("xmm9") _,  out("xmm10") _, out("xmm11") _,
-    out("xmm12") _, out("xmm13") _, out("xmm14") _, out("xmm15") _,
+    clobber_abi("C")
   );
   stack
 }
 
 /// Pauses the current stack context and resumes another.
-///
-/// If the pointer points to an `extern "C"` function then the `arg` element is forwarded to it
-/// through the `rdi` register.
 ///
 /// # Safety
 ///
@@ -105,8 +91,14 @@ pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch
     "mov [rsp - 8],  rax", // save end of function as the return address
     "mov [rsp - 16], rbp", // save the frame pointer (we aren't allowed to clobber it)
     "mov [rsp - 24], rbx", // save llvm's nefarious porpoises register (no clobbering)
+    // our stack should now look like this:
+    // | rsp rel | data           |
+    // |---------|----------------|
+    // | -8      | return address |
+    // | -16     | frame pointer  |
+    // | -24     | llvm obscurity |
 
-    // switch stacks
+    // step 2: switch stacks
     "mov rdx, rsp",        // save current stack pointer into rdx
     "mov rsp, rdi",        // load new stack pointer from resume_stack
 
@@ -130,51 +122,27 @@ pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch
     out("rdx") stack,
     out("rcx") _,
     out("rax") _,
-    // clobber_abi("C")
-    out("r8") _,    out("r9") _,    out("r10") _,   out("r11") _,
-    out("r12") _,   out("r13") _,   out("r14") _,   out("r15") _,
-    out("xmm0") _,  out("xmm1") _,  out("xmm2") _,  out("xmm3") _,
-    out("xmm4") _,  out("xmm5") _,  out("xmm6") _,  out("xmm7") _,
-    out("xmm8") _,  out("xmm9") _,  out("xmm10") _, out("xmm11") _,
-    out("xmm12") _, out("xmm13") _, out("xmm14") _, out("xmm15") _,
+    clobber_abi("C")
   );
   Switch { stack, arg }
 }
 
 /* Trampoline function (terminates the call chain, becoming the first frame):
  * - called with an artificial frame.
- * - calls the function in the artificial frame.
+ * - calls the function in a new frame.
  * - expects that function never to return.
  */
-
-// On nightly, we can implement the trampoline with a naked fn
-#[cfg(feature="nightly")]
-#[naked]
-unsafe extern "C" fn trampoline() {
-  // .cfi_undefined marks a register as unrestorable in DWARF
-  asm!(
-    ".cfi_undefined rip", // This one's for the unwinder, to terminate the call chain.
-    ".cfi_undefined rbp", // This one's for gdb, to avoid a "..." stack entry above us.
-    "call [rsp]",         // call the function we left on the stack
-    options(noreturn)
-  )
-}
-
-// In stable rust, we can use global_asm and an extern fn
-// Note: we haven't actually tested this at all.
-#[cfg(not(feature="nightly"))]
 extern "C" {
     fn trampoline();
 }
 
-#[cfg(not(feature="nightly"))]
 core::arch::global_asm!(
   ".global trampoline",
-  ".align 16",
+  ".align 16",             // put it at the start of a quadword to increase fetch perf.
   "trampoline:",
-  ".cfi_startproc",
-  ".cfi_undefined rip",
-  ".cfi_undefined rbp",
-  "call [rsp]",
-  ".cfi_endproc"
+  ".cfi_startproc simple", // function prologue
+  ".cfi_undefined rip",    // stop unwinding at this frame
+  ".cfi_undefined rsp",    // stop the call chain at this frame (for gdb)
+  "call [rsp]",            // call the function in a new stack frame.
+  ".cfi_endproc"           // function epilogue
 );
