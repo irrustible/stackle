@@ -39,11 +39,11 @@ fn adding() {
 
 | OS            | aarch64 | arm | riscv32 | riscv64 | x86 | x86_64 |
 |---------------|---------|-----|---------|---------|-----|--------|
-| DragonflyBSD  | U       | P   | P       | P       | U   | U      |
-| FreeBSD (12+) | U       | P   | P       | P       | U   | U      |
-| Linux         | U       | P   | P       | P       | U   | S      |
-| NetBSD        | U       | P   | P       | P       | U   | U      |
-| OpenBSD       | U       | P   | P       | P       | U   | U      |
+| DragonflyBSD  | U       | P   | U       | U       | U   | U      |
+| FreeBSD (12+) | U       | P   | U       | U       | U   | U      |
+| Linux         | U       | P   | U       | U       | U   | S      |
+| NetBSD        | U       | P   | U       | U       | U   | U      |
+| OpenBSD       | U       | P   | U       | U       | U   | U      |
 | Mac OS X      | U       | X   |         |         |     | U      |
 | Windows       | U       | X   |         |         | X   | P      |
 
