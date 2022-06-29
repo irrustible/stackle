@@ -21,12 +21,12 @@ pub unsafe extern "C" fn link_detached(
   asm!(
     // step 1: state preservation. we must spill our state to the stack so we may be resumed.
     // addi = add immediate
-    "addi sp, sp, -16",  // sp = sp - 16 (reserve space on the stack)
+    "addi  sp, sp, -16",       // sp = sp - 16 (reserve space on the stack)
     // auipc - add upper immediate to program counter, i.e. make a pc-rel addr absolute.
-    "auipc ra, %lo(2f)", // ra = endofthisfunction
+    "auipc ra, %pcrel_lo(2f)", // ra = endofthisfunction
     // sd = store double (64 bit)
-    "sd ra, 8(sp)",      // *(sp+8) = ra (save return address)
-    "sd fp, 0(sp)",      // *sp = fp (save frame pointer)
+    "sd    ra, 8(sp)",         // *(sp+8) = ra (save return address)
+    "sd    fp, 0(sp)",         // *sp = fp (save frame pointer)
     // our stack should now look like this:
     // | new sp rel | old sp rel | data           |
     // |------------|------------|----------------|
@@ -86,10 +86,10 @@ pub unsafe extern "C" fn link_detached(
 pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch {
   asm!(
     // step 1: state preservation. we must spill our state to the stack so we may be resumed.
-    "addi  sp,     sp, -16", // sp = sp - 16 (reserve space on the stack)
-    "auipc ra, %lo(2f)",     // ra = endofthisfunction
-    "sd    ra,   8(sp)",     // *(sp+8) = ra (save return address)
-    "sd    fp,   0(sp)",     // *sp = fp (save frame pointer)
+    "addi  sp,     sp, -16",   // sp = sp - 16 (reserve space on the stack)
+    "auipc ra, %pcrel_lo(2f)", // ra = endofthisfunction
+    "sd    ra,   8(sp)",       // *(sp+8) = ra (save return address)
+    "sd    fp,   0(sp)",       // *sp = fp (save frame pointer)
     // our stack should now look like this:
     // | new sp rel | old sp rel | data           |
     // |------------|------------|----------------|
@@ -105,6 +105,7 @@ pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch
     // | a2       | paused stack pointer |
 
     // step 3: state restoration (inverse of preservation) and branching
+    // ld = load double (64 bit)
     "ld   fp, 0(a0)",     // fp = *a0 (load the frame pointer)
     "ld   ra, 8(a0)",     // ra = *(a0 + 8) (load the return address)
     "addi sp,   a0, 16",  // sp = r10 + 16 (set new sp but release the frame)
