@@ -4,7 +4,7 @@ Low level utilities for implementing green threads and coroutines.
 
 ## Status: alpha
 
-Things may still change and we only support one platform so far.
+Things may still change and we only test x86-64 so far.
 
 I believe I've dealt with all the segfaults now, but it's still too
 early to be sure.
@@ -17,7 +17,7 @@ use stackle::{*, stack::*, switch::*};
 fn adder(paused: *mut usize, value: usize) {
   let mut ret = (paused, value);
   loop {
-    ret = unsafe { suspend(ret.0, ret.1 + 1) };
+    ret = unsafe { switch(ret.0, ret.1 + 1) };
   }
 }
 
@@ -25,10 +25,10 @@ fn adder(paused: *mut usize, value: usize) {
 fn adding() {
   unsafe {
     let s = OsStack::new(128 * 1024); // 128k seems reasonable.
-    let c = link_closure(adder, s.end());
+    let c = link_closure_detached(adder, s.end());
     let mut ret = (c, 0usize);
     for i in 0..1000 {
-      ret = resume(ret.0, ret.1);
+      ret = switch(ret.0, ret.1);
       assert_eq!(i + 1, ret.1);
     }
   }
@@ -58,11 +58,8 @@ Note: With the exception of FreeBSD, the API doesn't appear to have changed sign
 purposes in many years so within reason, any version ought to work.
 
 More to come:
-* x86-64 windows
-* x86 unix + windows
-* aarch64 unix + windows
-* arm unix (+ windows?)
-* riscv unix
+* x86/x86-64 windows
+* arm unix
 
 ## Limitations
 
