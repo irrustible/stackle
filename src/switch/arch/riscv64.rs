@@ -22,7 +22,7 @@ pub unsafe extern "C" fn link_detached(
     // step 1: state preservation. we must spill our state to the stack so we may be resumed.
     // addi = add immediate
     "addi sp, sp, -16",  // sp = sp - 16 (reserve space on the stack)
-    // auipc - add upper immediate to program counter, or in other words, get a pc-rel addr.
+    // auipc - add upper immediate to program counter, i.e. make a pc-rel addr absolute.
     "auipc ra, %lo(2f)", // ra = endofthisfunction
     // sd = store double (64 bit)
     "sd ra, 8(sp)",      // *(sp+8) = ra (save return address)
@@ -51,10 +51,12 @@ pub unsafe extern "C" fn link_detached(
     // | a1       | arg (untouched)        |
     
     // step 4: calling trampoline on the new stack.
-    "mv   zero, ra",    // ra = 0 (meaning "top of call chain")
-    "addi sp, a2, -16", // sp = a2 - 16 (set the correct stack pointer0)
+    // these are both ways of terminating the call chain
+    "mv   zero, ra",      // ra = 0 (no return address)
+    "mv   zero, fp",      // fp = 0 (no frame pointer)
+    "addi sp,   a2, -16", // sp = a2 - 16 (set the correct stack pointer0)
     // j = jump (actually a shorthand for `jalr zero, a3`)
-    "j    a3",          // transfer to trampoline
+    "j    a3",            // transfer to trampoline
     
     // End of function, as taken in first instruction. register layout should now be:
     // | register | value                   |
