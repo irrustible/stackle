@@ -39,6 +39,7 @@ fn adding() {
 
 | OS            | aarch64 | arm | riscv32 | riscv64 | x86 | x86_64 |
 |---------------|---------|-----|---------|---------|-----|--------|
+| Generic POSIX | U       | P   | U       | U       | U   | U      |
 | DragonflyBSD  | U       | P   | U       | U       | U   | U      |
 | FreeBSD (12+) | U       | P   | U       | U       | U   | U      |
 | Linux         | U       | P   | U       | U       | U   | S      |
@@ -54,12 +55,22 @@ Legend:
 * X: No support planned.
 * blank = invalid combination.
 
-Note: With the exception of FreeBSD, the API doesn't appear to have changed significantly for our
-purposes in many years so within reason, any version ought to work.
+For our purposes, `Generic POSIX` means approximately that `libc` defines `mmap()` for it. Obviously
+we're unable to test it.
+
+Note: With the exception of FreeBSD, the mmap API doesn't appear to have changed significantly for
+our purposes on any operating system in many years so within reason, any version ought to work.
 
 More to come:
 * x86/x86-64 windows
 * arm unix
+
+## Feature flags
+
+| Feature | Default | Effect                               |
+|---------|---------|--------------------------------------|
+| `std `  | yes     | Enables `AllocatorStack` via `std`   |
+| `alloc` | no      | Enables `AllocatorStack` via `alloc` |
 
 ## Limitations
 

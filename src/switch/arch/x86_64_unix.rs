@@ -35,7 +35,6 @@ pub unsafe extern "C" fn link_detached(
     // | -16     | frame pointer  |
     // | -24     | llvm obscurity |
 
-    
     // step 2: set up the trampoline frame in the new stack
     "mov [rdx - 8],  rcx", // trampoline
     "mov [rdx - 16], rdi", // fun
