@@ -9,10 +9,10 @@ pub use aarch64::*;
 // #[cfg(target_arch="arm")]
 // pub use arm::*;
 
-// #[cfg(target_arch="riscv32")]
-// mod riscv32;
-// #[cfg(target_arch="riscv32")]
-// pub use riscv32::*;
+#[cfg(target_arch="riscv32")]
+mod riscv32;
+#[cfg(target_arch="riscv32")]
+pub use riscv32::*;
 
 #[cfg(target_arch="riscv64")]
 mod riscv64;
