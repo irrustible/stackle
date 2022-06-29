@@ -47,8 +47,8 @@ pub unsafe extern "C" fn link_detached(
     // argument layout should now be:
     // | register | value                  |
     // |----------|------------------------|
-    // | r10      | paused stack pointer   |
-    // | r11      | arg (untouched)        |
+    // | a0       | paused stack pointer   |
+    // | a1       | arg (untouched)        |
     
     // step 4: calling trampoline on the new stack.
     "mv   zero, ra",    // ra = 0 (meaning "top of call chain")
@@ -59,8 +59,8 @@ pub unsafe extern "C" fn link_detached(
     // End of function, as taken in first instruction. register layout should now be:
     // | register | value                   |
     // |----------|-------------------------|
-    // | r11      | arg                     |
-    // | r12      | paused stack pointer    |
+    // | a1       | arg                     |
+    // | a2       | paused stack pointer    |
 
     "2:",
     inout("a0") fun => _,
@@ -99,8 +99,8 @@ pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch
     // argument layout should now be:
     // | register | value                |
     // |----------|----------------------|
-    // | r11      | arg (untouched)      |
-    // | r12      | paused stack pointer |
+    // | a1       | arg (untouched)      |
+    // | a2       | paused stack pointer |
 
     // step 3: state restoration (inverse of preservation) and branching
     "ld   fp, 0(a0)",     // fp = *a0 (load the frame pointer)
@@ -111,8 +111,8 @@ pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch
     // End of function, as taken in first instruction. register layout should now be:
     // | register | value                   |
     // |----------|-------------------------|
-    // | r1       | arg                     |
-    // | r2       | paused stack pointer    |
+    // | a1       | arg                     |
+    // | a2       | paused stack pointer    |
     "2:", 
     inout("a0") stack => _,
     inout("a1") arg,
