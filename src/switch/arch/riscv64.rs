@@ -138,6 +138,6 @@ core::arch::global_asm!(
   ".cfi_startproc simple", // function prologue
   ".cfi_undefined ra",     // stop unwinding at this frame
   ".cfi_undefined fp",     // stop the call chain at this frame (for gdb)
-  "call",                  // call the function in a new stack frame.
+  "call sp",               // call the function in a new stack frame.
   ".cfi_endproc"           // function epilogue
 );
