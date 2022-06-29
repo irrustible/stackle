@@ -1,11 +1,8 @@
-//! Aarch64's implementation is pretty simple. We only need 5 instructions and the implementation is
-//! pretty concise because it's a good assembly language.
-//!
 //! Fun ABI facts:
 //!
-//! * `sp` must be aligned by 16 at all times at which it is used to read/write data.
-//! * We cannot rely on there being a red zone below `sp`. There's a 2 word one on windows but it
-//!   sounds like the compiler might play with it (sometimes?) so we'd better not risk it.
+//! * `sp` must always be 16-byte aligned.
+//! * No red zone under the stack pointer.
+//! * Too many callee-push registers, what were they thinking?
 use crate::switch::{InitFn, Switch};
 use core::arch::asm;
 
@@ -23,48 +20,53 @@ pub unsafe extern "C" fn link_detached(
 ) -> *mut usize {
   asm!(
     // step 1: state preservation. we must spill our state to the stack so we may be resumed.
-    // adr = generate pc-relative address, 2f = forward reference to label 2.
-    "adr lr, 2f",             // set the link register to the end of this function.
-    // stp = store pair of registers, [sp, #-16] = predecrement sp by 16. implies sp -= 16
-    "stp fp, lr, [sp, #-16]", // push the frame pointer and return address to the stack
+    // addi = add immediate
+    "addi sp, sp, -16",  // sp = sp - 16 (reserve space on the stack)
+    // auipc - add upper immediate to program counter, or in other words, get a pc-rel addr.
+    "auipc ra, %lo(2f)", // ra = endofthisfunction
+    // sd = store double (64 bit)
+    "sd ra, 8(sp)",      // *(sp+8) = ra (save return address)
+    "sd fp, 0(sp)",      // *sp = fp (save frame pointer)
     // our stack should now look like this:
     // | new sp rel | old sp rel | data           |
     // |------------|------------|----------------|
     // | +8         | -8         | return address |
     // | 0          | -16        | frame pointer  |
 
-    // step 2: set up the trampoline frame in the new stack
-    "stp x0, x3, [x2, #-16]" // push fun and trampoline to the stack. implies x2 -= 16
+    "sd a3,  -8(a2)", // *(a2-8) = a3 (store trampoline)
+    "sd a0, -16(a2)", // *(a2-16) = a0 (push fun)
     // the new stack should now look like this:
-    // | new x2 rel | old x2 rel | data                |
-    // |------------|------------|---------------------|
-    // | +8         | -8         | trampoline function |
-    // | 0          | -16        | entrypoint function |
+    // | a2 rel | data                |
+    // |--------|---------------------|
+    // | -8     | trampoline function |
+    // | -16    | entrypoint function |
 
     // step 3: setting up parameters
-    "mov sp, x0", // current stack pointer -> arg 1, overwriting 'fun'.
+    // mv = move (actually a shortcut for `addi r10, sp, 0`)
+    "mv a0, sp", // a0 = sp (current stack pointer -> arg 1, overwriting 'fun').
     // argument layout should now be:
     // | register | value                  |
     // |----------|------------------------|
-    // | x0       | paused stack pointer   |
-    // | x1       | arg (untouched)        |
+    // | r10      | paused stack pointer   |
+    // | r11      | arg (untouched)        |
     
     // step 4: calling trampoline on the new stack.
-    "mov xzr, lr", // zero out the link register (meaning "top of call chain")
-    "mov x2, sp",  // set the correct stack pointer
-    "bx x3",       // switch to trampoline
+    "mv   zero, ra",    // ra = 0 (meaning "top of call chain")
+    "addi sp, a2, -16", // sp = a2 - 16 (set the correct stack pointer0)
+    // j = jump (actually a shorthand for `jalr zero, a3`)
+    "j    a3",          // transfer to trampoline
     
     // End of function, as taken in first instruction. register layout should now be:
     // | register | value                   |
     // |----------|-------------------------|
-    // | x1       | arg                     |
-    // | x2       | paused stack pointer    |
+    // | r11      | arg                     |
+    // | r12      | paused stack pointer    |
 
     "2:",
-    inout("x0") fun => _,
-    inout("x1") arg => _,
-    inout("x2") stack,
-    inout("x3") trampoline => _,
+    inout("a0") fun => _,
+    inout("a1") arg => _,
+    inout("a2") stack,
+    inout("a3") trampoline => _,
     clobber_abi("C")
   );
   stack
@@ -82,10 +84,10 @@ pub unsafe extern "C" fn link_detached(
 pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch {
   asm!(
     // step 1: state preservation. we must spill our state to the stack so we may be resumed.
-    // adr = generate pc-relative address, 2f = forward reference to label 2.
-    "adr lr, 2f",             // set the link register to the end of this function.
-    // stp = store pair of registers, [sp, #-16] = predecrement sp by 16. implies sp -= 16
-    "stp fp, lr, [sp, #-16]", // push the frame pointer and return address to the stack
+    "addi  sp,     sp, -16", // sp = sp - 16 (reserve space on the stack)
+    "auipc ra, %lo(2f)",     // ra = endofthisfunction
+    "sd    ra,   8(sp)",     // *(sp+8) = ra (save return address)
+    "sd    fp,   0(sp)",     // *sp = fp (save frame pointer)
     // our stack should now look like this:
     // | new sp rel | old sp rel | data           |
     // |------------|------------|----------------|
@@ -93,28 +95,28 @@ pub unsafe extern "C" fn switch(mut stack: *mut usize, mut arg: usize) -> Switch
     // | 0          | -16        | frame pointer  |
 
     // step 2: set parameters stacks
-    "mov sp, x2", // save current stack pointer into x2
+    "mv sp, a2", // a2 = sp (save current stack pointer)
     // argument layout should now be:
     // | register | value                |
     // |----------|----------------------|
-    // | x1       | arg (untouched)      |
-    // | x2       | paused stack pointer |
+    // | r11      | arg (untouched)      |
+    // | r12      | paused stack pointer |
 
     // step 3: state restoration (inverse of preservation) and branching
-    // ldp = load pair of registers, #16 = postincrement sp by 16, implies sp += 16
-    "ldp fp, lr, [x0], #16" // load the frame pointer and return address from the stack
-    "mov x0, sp",           // load new stack pointer
-    "bx lr",                // branch to the return address.
+    "ld   fp, 0(a0)",     // fp = *a0 (load the frame pointer)
+    "ld   ra, 8(a0)",     // ra = *(a0 + 8) (load the return address)
+    "addi sp,   a0, 16",  // sp = r10 + 16 (set new sp but release the frame)
+    "j    ra",            // transfer control back to the return address
 
     // End of function, as taken in first instruction. register layout should now be:
     // | register | value                   |
     // |----------|-------------------------|
-    // | x1       | arg                     |
-    // | x2       | paused stack pointer    |
+    // | r1       | arg                     |
+    // | r2       | paused stack pointer    |
     "2:", 
-    inout("x0") stack => _,
-    inout("x1") arg,
-    out("x2") stack,
+    inout("a0") stack => _,
+    inout("a1") arg,
+    out("a2")   stack,
     clobber_abi("C")
   );
   Switch { stack, arg }
@@ -134,8 +136,8 @@ core::arch::global_asm!(
   ".align 16",             // put it at the start of a quadword to increase fetch perf.
   "trampoline:",
   ".cfi_startproc simple", // function prologue
-  ".cfi_undefined lr",     // stop unwinding at this frame
+  ".cfi_undefined ra",     // stop unwinding at this frame
   ".cfi_undefined fp",     // stop the call chain at this frame (for gdb)
-  "bl sp",                 // call the function in a new stack frame.
+  "call",                  // call the function in a new stack frame.
   ".cfi_endproc"           // function epilogue
 );

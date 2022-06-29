@@ -8,7 +8,6 @@ edition = "2021"
 default = ["std"]
 alloc = []
 std = []
-nightly = []
 
 [dependencies]
 

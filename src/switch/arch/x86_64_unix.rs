@@ -1,6 +1,12 @@
-//! The job is actually quite simple here. We have loads of registers
-//! to play with, so mostly it's just a case of pushing callee-saved
-//! registers and having lots of clobbers.
+//! X86-64 is pretty simple. We have loads of registers to play with and we only use 4 instructions.
+//! It is made slightly less clear by some leaf function optimisations which may help performance on
+//! older processors.
+//!
+//! Fun ABI facts:
+//!
+//! * `sp` ought to be aligned to 16 bytes when making a function call. This is poorly enforced, but
+//!   if you don't it's liable to confuse some software and may decrease performance.
+//! * There is a 128-byte red zone below the stack we can use for leaf function storage.
 use crate::switch::{InitFn, Switch};
 use core::arch::asm;
 
@@ -22,17 +28,13 @@ pub unsafe extern "C" fn link_detached(
     "mov [rsp - 8],  rax", // save end of function as the return address
     "mov [rsp - 16], rbp", // save the frame pointer in case it is used (it probably isn't)
     "mov [rsp - 24], rbx", // save llvm's nefarious porpoises register.
-    // our stack should now look like this:
+    // our stack should now look like this (in the red zone):
     // | rsp rel | data           |
     // |---------|----------------|
     // | -8      | return address |
     // | -16     | frame pointer  |
     // | -24     | llvm obscurity |
 
-    // You may notice all of those are below the stack pointer. Isn't that naughty?
-    //
-    // No, the ABI for this platform provides a 128-byte "red zone" under the stack for leaf
-    // functions to store their data.
     
     // step 2: set up the trampoline frame in the new stack
     "mov [rdx - 8],  rcx", // trampoline
@@ -55,7 +57,7 @@ pub unsafe extern "C" fn link_detached(
     // | rsi      | arg (closure parameter) |
     
     // step 4: calling trampoline on the new stack.
-    "xor rbx, rbx",        // zero out rbx
+    "xor rbx, rbx",        // zero out rbx (reset nefarious porpoise state)
     "xor rbp, rbp",        // zero out rbp (meaning "top of call chain")
     "lea rsp, [rdx - 16]", // set the correct stack pointer
     "jmp rcx",             // switch to trampoline
@@ -63,7 +65,6 @@ pub unsafe extern "C" fn link_detached(
     // End of function, as taken in first instruction. register layout should now be:
     // | register | value                   |
     // |----------|-------------------------|
-    // | rdi      | our sp (ignored)        |
     // | rsi      | arg                     |
     // | rdx      | paused stack pointer    |
 
