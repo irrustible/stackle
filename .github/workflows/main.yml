@@ -27,6 +27,8 @@ jobs:
       shell: alpine.sh {0}
     - run: rustup install nightly
       shell: alpine.sh {0}
+    - run: rustup component add --toolchain nightly cargo
+      shell: alpine.sh {0}
     - run: rustup run nightly cargo test --verbose -- --nocapture
       shell: alpine.sh {0}
       env:
