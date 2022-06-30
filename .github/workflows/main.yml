@@ -20,7 +20,9 @@ jobs:
         branch: edge
         arch: x86
         extra-repositories: http://dl-cdn.alpinelinux.org/alpine/edge/community
-        packages: rustup build-base
+        packages: curl build-base
+    - run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+      shell: alpine.sh {0}
     - run: rustup install nightly
       shell: alpine.sh {0}
     - run: rustup run nightly cargo test --verbose -- --nocapture
