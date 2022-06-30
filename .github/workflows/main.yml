@@ -19,8 +19,10 @@ jobs:
       with:
         branch: v3.15
         arch: x86
-        packages: rust cargo build-base
-    - run: cargo test --verbose -- --nocapture
+        packages: rustup build-base
+    - run: rustup install nightly
+      shell: alpine.sh {0}
+    - run: rustup run nightly cargo test --verbose -- --nocapture
       shell: alpine.sh {0}
       env:
         RUST_BACKTRACE: full
