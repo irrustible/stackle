@@ -27,9 +27,11 @@ jobs:
       shell: alpine.sh {0}
     - run: rustup install nightly
       shell: alpine.sh {0}
-    - run: rustup component add --toolchain nightly cargo
+    - run: rustup default nightly
       shell: alpine.sh {0}
-    - run: rustup run nightly cargo test --verbose -- --nocapture
+    - run: rustup component add cargo
+      shell: alpine.sh {0}
+    - run: rustup run cargo test --verbose -- --nocapture
       shell: alpine.sh {0}
       env:
         RUST_BACKTRACE: full
