@@ -25,7 +25,7 @@ jobs:
       shell: alpine.sh {0}
     - run: sh rustup.sh -y --profile minimal --default-toolchain nightly
       shell: alpine.sh {0}
-    - run: source $HOME/.cargo/env && cargo test --verbose -- --nocapture
+    - run: $HOME/.cargo/bin/cargo test --verbose -- --nocapture
       shell: alpine.sh {0}
       env:
         RUST_BACKTRACE: full
