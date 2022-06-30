@@ -19,6 +19,7 @@ jobs:
       with:
         branch: edge
         arch: x86
+        extra-repositories: http://dl-cdn.alpinelinux.org/alpine/edge/community
         packages: rustup build-base
     - run: rustup install nightly
       shell: alpine.sh {0}
