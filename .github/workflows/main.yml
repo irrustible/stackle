@@ -21,7 +21,9 @@ jobs:
         arch: x86
         extra-repositories: http://dl-cdn.alpinelinux.org/alpine/edge/community
         packages: curl build-base
-    - run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    - run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup.sh
+      shell: alpine.sh {0}
+    - run: sh rustup.sh -y
       shell: alpine.sh {0}
     - run: rustup install nightly
       shell: alpine.sh {0}
