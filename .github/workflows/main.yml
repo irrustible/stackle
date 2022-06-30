@@ -17,7 +17,7 @@ jobs:
         submodules: true
     - uses: jirutka/setup-alpine@v1
       with:
-        branch: v3.15
+        branch: edge
         arch: x86
         packages: rustup build-base
     - run: rustup install nightly
